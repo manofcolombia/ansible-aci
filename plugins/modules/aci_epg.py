@@ -26,13 +26,11 @@ options:
     description:
     - Name of an existing application network profile, that will contain the EPGs.
     type: str
-    required: yes
     aliases: [ app_profile, app_profile_name ]
   epg:
     description:
     - Name of the end point group.
     type: str
-    required: yes
     aliases: [ epg_name, name ]
   bd:
     description:
@@ -68,6 +66,14 @@ options:
     - This is very convenient for migration scenarios, or when ACI is used for network automation but not for policy.
     - The APIC defaults to C(no) when unset during creation.
     type: bool
+  monitoring_policy:
+    description:
+    - The name of the monitoring policy.
+    type: str
+  custom_qos_policy:
+    description:
+    - The name of the custom Quality of Service policy.
+    type: str
   state:
     description:
     - Use C(present) or C(absent) for adding or removing.
@@ -84,15 +90,16 @@ extends_documentation_fragment:
 
 notes:
 - The C(tenant) and C(app_profile) used must exist before using this module in your playbook.
-  The M(aci_tenant) and M(aci_ap) modules can be used for this.
+  The M(cisco.aci.aci_tenant) and M(cisco.aci.aci_ap) modules can be used for this.
 seealso:
-- module: aci_tenant
-- module: aci_ap
+- module: cisco.aci.aci_tenant
+- module: cisco.aci.aci_ap
 - name: APIC Management Information Model reference
   description: More information about the internal APIC class B(fv:AEPg).
   link: https://developer.cisco.com/docs/apic-mim-ref/
 author:
 - Swetha Chunduri (@schunduri)
+- Shreyas Srish (@shrsr)
 '''
 
 EXAMPLES = r'''
@@ -106,6 +113,7 @@ EXAMPLES = r'''
     epg: web_epg
     description: Web Intranet EPG
     bd: prod_bd
+    monitoring_policy: default
     preferred_group: yes
     state: present
   delegate_to: localhost
@@ -138,6 +146,7 @@ EXAMPLES = r'''
     tenant: production
     app_profile: intranet
     epg: web_epg
+    monitoring_policy: default
     state: absent
   delegate_to: localhost
 
@@ -308,6 +317,8 @@ def main():
         preferred_group=dict(type='bool'),
         state=dict(type='str', default='present', choices=['absent', 'present', 'query']),
         name_alias=dict(type='str'),
+        monitoring_policy=dict(type='str'),
+        custom_qos_policy=dict(type='str'),
     )
 
     module = AnsibleModule(
@@ -332,6 +343,18 @@ def main():
     tenant = module.params.get('tenant')
     ap = module.params.get('ap')
     name_alias = module.params.get('name_alias')
+    monitoring_policy = module.params.get('monitoring_policy')
+    custom_qos_policy = module.params.get('custom_qos_policy')
+
+    child_configs = [
+        dict(fvRsBd=dict(attributes=dict(tnFvBDName=bd))),
+        dict(fvRsAEPgMonPol=dict(attributes=dict(tnMonEPGPolName=monitoring_policy)))
+    ]
+
+    if custom_qos_policy is not None:
+        child_configs.append(
+            dict(fvRsCustQosPol=dict(attributes=dict(tnQosCustomPolName=custom_qos_policy)))
+        )
 
     aci.construct_url(
         root_class=dict(
@@ -352,7 +375,7 @@ def main():
             module_object=epg,
             target_filter={'name': epg},
         ),
-        child_classes=['fvRsBd'],
+        child_classes=['fvRsBd', 'fvRsAEPgMonPol', 'fvRsCustQosPol'],
     )
 
     aci.get_existing()
@@ -369,13 +392,7 @@ def main():
                 prefGrMemb=preferred_group,
                 nameAlias=name_alias,
             ),
-            child_configs=[dict(
-                fvRsBd=dict(
-                    attributes=dict(
-                        tnFvBDName=bd,
-                    ),
-                ),
-            )],
+            child_configs=child_configs,
         )
 
         aci.get_diff(aci_class='fvAEPg')

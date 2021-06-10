@@ -21,7 +21,6 @@ options:
     description:
     - The name of the Fiber Channel interface policy.
     type: str
-    required: yes
     aliases: [ name ]
   description:
     description:
@@ -58,7 +57,8 @@ author:
 
 # FIXME: Add more, better examples
 EXAMPLES = r'''
-- cisco.aci.aci_interface_policy_fc:
+- name: Add a Fibre Channel interface policy
+  cisco.aci.aci_interface_policy_fc:
     host: '{{ hostname }}'
     username: '{{ username }}'
     password: '{{ password }}'

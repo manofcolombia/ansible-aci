@@ -1,6 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+# Copyright: (c) 2020, Jacob McGill <jmcgill298>
+# Copyright: (c) 2020, Shreyas Srish <ssrish@cisco.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
@@ -69,6 +71,11 @@ options:
     - Name of the end point group.
     type: str
     aliases: [ epg_name, name ]
+  enhanced_lag_policy:
+    description:
+    - Name of the VMM Domain Enhanced Lag Policy.
+    type: str
+    aliases: [ lag_policy ]
   netflow:
     description:
     - Determines if netflow should be enabled.
@@ -97,6 +104,12 @@ options:
     - Name of an existing tenant.
     type: str
     aliases: [ tenant_name ]
+  promiscuous:
+    description:
+    - Allow/Disallow promiscuous mode in vmm domain
+    type: str
+    choices: [ accept, reject ]
+    default: reject
   vm_provider:
     description:
     - The VM platform for VMM Domains.
@@ -104,24 +117,29 @@ options:
     - Support for CloudFoundry, OpenShift and Red Hat was added in ACI v3.1.
     type: str
     choices: [ cloudfoundry, kubernetes, microsoft, openshift, openstack, redhat, vmware ]
+  custom_epg_name:
+    description:
+    - The custom epg name in VMM domain association.
+    type: str
 extends_documentation_fragment:
 - cisco.aci.aci
 
 notes:
 - The C(tenant), C(ap), C(epg), and C(domain) used must exist before using this module in your playbook.
-  The M(aci_tenant) M(aci_ap), M(aci_epg) M(aci_domain) modules can be used for this.
+  The M(cisco.aci.aci_tenant) M(cisco.aci.aci_ap), M(cisco.aci.aci_epg) M(cisco.aci.aci_domain) modules can be used for this.
 - OpenStack VMM domains must not be created using this module. The OpenStack VMM domain is created directly
   by the Cisco APIC Neutron plugin as part of the installation and configuration.
   This module can be used to query status of an OpenStack VMM domain.
 seealso:
-- module: aci_ap
-- module: aci_epg
-- module: aci_domain
+- module: cisco.aci.aci_ap
+- module: cisco.aci.aci_epg
+- module: cisco.aci.aci_domain
 - name: APIC Management Information Model reference
   description: More information about the internal APIC class B(fv:RsDomAtt).
   link: https://developer.cisco.com/docs/apic-mim-ref/
 author:
 - Jacob McGill (@jmcgill298)
+- Shreyas Srish (@shrsr)
 '''
 
 EXAMPLES = r'''
@@ -306,12 +324,15 @@ def main():
         encap_mode=dict(type='str', choices=['auto', 'vlan', 'vxlan']),
         switching_mode=dict(type='str', default='native', choices=['AVE', 'native']),
         epg=dict(type='str', aliases=['name', 'epg_name']),  # Not required for querying all objects
+        enhanced_lag_policy=dict(type='str', aliases=['lag_policy']),
         netflow=dict(type='bool'),
         primary_encap=dict(type='int'),
         resolution_immediacy=dict(type='str', choices=['immediate', 'lazy', 'pre-provision']),
         state=dict(type='str', default='present', choices=['absent', 'present', 'query']),
         tenant=dict(type='str', aliases=['tenant_name']),  # Not required for querying all objects
         vm_provider=dict(type='str', choices=['cloudfoundry', 'kubernetes', 'microsoft', 'openshift', 'openstack', 'redhat', 'vmware']),
+        promiscuous=dict(type='str', default='reject', choices=['accept', 'reject']),
+        custom_epg_name=dict(type='str'),
     )
 
     module = AnsibleModule(
@@ -332,6 +353,8 @@ def main():
     domain = module.params.get('domain')
     domain_type = module.params.get('domain_type')
     vm_provider = module.params.get('vm_provider')
+    promiscuous = module.params.get('promiscuous')
+    custom_epg_name = module.params.get('custom_epg_name')
     encap = module.params.get('encap')
     if encap is not None:
         if encap in range(1, 4097):
@@ -341,6 +364,7 @@ def main():
     encap_mode = module.params.get('encap_mode')
     switching_mode = module.params.get('switching_mode')
     epg = module.params.get('epg')
+    enhanced_lag_policy = module.params.get('enhanced_lag_policy')
     netflow = aci.boolean(module.params.get('netflow'), 'enabled', 'disabled')
     primary_encap = module.params.get('primary_encap')
     if primary_encap is not None:
@@ -355,9 +379,23 @@ def main():
     if domain_type in ['l2dom', 'phys'] and vm_provider is not None:
         module.fail_json(msg="Domain type '%s' cannot have a 'vm_provider'" % domain_type)
 
+    child_classes = None
+    child_configs = None
+
     # Compile the full domain for URL building
     if domain_type == 'vmm':
         epg_domain = 'uni/vmmp-{0}/dom-{1}'.format(VM_PROVIDER_MAPPING[vm_provider], domain)
+        child_configs = [dict(vmmSecP=dict(attributes=dict(allowPromiscuous=promiscuous)))]
+        child_classes = ['vmmSecP']
+
+        if enhanced_lag_policy is not None:
+            lag_policy = epg_domain + '/vswitchpolcont/enlacplagp-{0}'.format(enhanced_lag_policy)
+            child_configs.append(
+                dict(fvAEPgLagPolAtt=dict(attributes=dict(annotation=''),
+                     children=[dict(fvRsVmmVSwitchEnhancedLagPol=dict(attributes=dict(annotation='', tDn=lag_policy)))]))
+            )
+            child_classes.append('fvAEPgLagPolAtt')
+
     elif domain_type == 'l2dom':
         epg_domain = 'uni/l2dom-{0}'.format(domain)
     elif domain_type == 'phys':
@@ -390,6 +428,7 @@ def main():
             module_object=epg_domain,
             target_filter={'tDn': epg_domain},
         ),
+        child_classes=child_classes,
     )
 
     aci.get_existing()
@@ -406,7 +445,9 @@ def main():
                 netflowPref=netflow,
                 primaryEncap=primary_encap,
                 resImedcy=resolution_immediacy,
+                customEpgName=custom_epg_name,
             ),
+            child_configs=child_configs,
         )
 
         aci.get_diff(aci_class='fvRsDomAtt')

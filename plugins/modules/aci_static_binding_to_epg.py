@@ -49,8 +49,9 @@ options:
     description:
     - Determines the primary encapsulation ID associating the C(epg)
       with the interface path when using micro-segmentation.
-    - Accepted values are any valid encap ID for specified encap, currently ranges between C(1) and C(4096).
-    type: int
+    - Accepted values are any valid encap ID for specified encap, currently ranges between C(1) and C(4096) and C(unknown.
+    - C(unknown) is the default value and using C(unknown) disables the Micro-Segmentation.
+    type: str
     aliases: [ primary_vlan, primary_vlan_id ]
   deploy_immediacy:
     description:
@@ -87,6 +88,7 @@ options:
     - When C(interface_type) is C(vpc), then C(leafs) is a list with both leaf IDs.
     - The C(leafs) value is usually something like '101' or '101-102' depending on C(connection_type).
     type: list
+    elements: str
     aliases: [ leaves, nodes, paths, switches ]
   interface:
     description:
@@ -111,11 +113,11 @@ extends_documentation_fragment:
 
 notes:
 - The C(tenant), C(ap), C(epg) used must exist before using this module in your playbook.
-  The M(aci_tenant), M(aci_ap), M(aci_epg) modules can be used for this.
+  The M(cisco.aci.aci_tenant), M(cisco.aci.aci_ap), M(cisco.aci.aci_epg) modules can be used for this.
 seealso:
-- module: aci_tenant
-- module: aci_ap
-- module: aci_epg
+- module: cisco.aci.aci_tenant
+- module: cisco.aci.aci_ap
+- module: cisco.aci.aci_epg
 - name: APIC Management Information Model reference
   description: More information about the internal APIC class B(fv:RsPathAtt).
   link: https://developer.cisco.com/docs/apic-mim-ref/
@@ -310,13 +312,13 @@ def main():
         epg=dict(type='str', aliases=['epg_name']),  # Not required for querying all objects
         description=dict(type='str', aliases=['descr']),
         encap_id=dict(type='int', aliases=['vlan', 'vlan_id']),
-        primary_encap_id=dict(type='int', aliases=['primary_vlan', 'primary_vlan_id']),
+        primary_encap_id=dict(type='str', aliases=['primary_vlan', 'primary_vlan_id']),
         deploy_immediacy=dict(type='str', choices=['immediate', 'lazy']),
         interface_mode=dict(type='str', choices=['802.1p', 'access', 'native', 'regular', 'tagged', 'trunk', 'untagged'],
                             aliases=['interface_mode_name', 'mode']),
         interface_type=dict(type='str', default='switch_port', choices=['fex', 'port_channel', 'switch_port', 'vpc']),
         pod_id=dict(type='int', aliases=['pod', 'pod_number']),  # Not required for querying all objects
-        leafs=dict(type='list', aliases=['leaves', 'nodes', 'paths', 'switches']),  # Not required for querying all objects
+        leafs=dict(type='list', elements='str', aliases=['leaves', 'nodes', 'paths', 'switches']),  # Not required for querying all objects
         interface=dict(type='str'),  # Not required for querying all objects
         extpaths=dict(type='int'),
         state=dict(type='str', default='present', choices=['absent', 'present', 'query']),
@@ -343,6 +345,9 @@ def main():
     interface_type = module.params.get('interface_type')
     pod_id = module.params.get('pod_id')
     leafs = module.params.get('leafs')
+
+    aci = ACIModule(module)
+
     if leafs is not None:
         # Process leafs, and support dash-delimited leafs
         leafs = []
@@ -351,28 +356,34 @@ def main():
             leafs.extend(str(leaf).split('-'))
         if len(leafs) == 1:
             if interface_type == 'vpc':
-                module.fail_json(msg='A interface_type of "vpc" requires 2 leafs')
+                aci.fail_json(msg='A interface_type of "vpc" requires 2 leafs')
             leafs = leafs[0]
         elif len(leafs) == 2:
             if interface_type != 'vpc':
-                module.fail_json(msg='The interface_types "switch_port", "port_channel", and "fex" \
+                aci.fail_json(msg='The interface_types "switch_port", "port_channel", and "fex" \
                     do not support using multiple leafs for a single binding')
             leafs = "-".join(leafs)
         else:
-            module.fail_json(msg='The "leafs" parameter must not have more than 2 entries')
+            aci.fail_json(msg='The "leafs" parameter must not have more than 2 entries')
     interface = module.params.get('interface')
     extpaths = module.params.get('extpaths')
     state = module.params.get('state')
 
     if encap_id is not None:
         if encap_id not in range(1, 4097):
-            module.fail_json(msg='Valid VLAN assigments are from 1 to 4096')
+            aci.fail_json(msg='Valid VLAN assignments are from 1 to 4096')
         encap_id = 'vlan-{0}'.format(encap_id)
 
     if primary_encap_id is not None:
-        if primary_encap_id not in range(1, 4097):
-            module.fail_json(msg='Valid VLAN assigments are from 1 to 4096')
-        primary_encap_id = 'vlan-{0}'.format(primary_encap_id)
+        try:
+            primary_encap_id = int(primary_encap_id)
+            if isinstance(primary_encap_id, int) and primary_encap_id in range(1, 4097):
+              primary_encap_id = 'vlan-{0}'.format(primary_encap_id)
+            else:
+                aci.fail_json(msg='Valid VLAN assignments are from 1 to 4096 or unknown.')
+        except Exception as e:
+          if isinstance(primary_encap_id, str) and primary_encap_id != 'unknown':
+              aci.fail_json(msg='Valid VLAN assignments are from 1 to 4096 or unknown. %s' % e)
 
     static_path = INTERFACE_TYPE_MAPPING[interface_type].format(pod_id=pod_id, leafs=leafs, extpaths=extpaths, interface=interface)
 
@@ -383,7 +394,6 @@ def main():
     if interface_mode is not None:
         interface_mode = INTERFACE_MODE_MAPPING[interface_mode]
 
-    aci = ACIModule(module)
     aci.construct_url(
         root_class=dict(
             aci_class='fvTenant',

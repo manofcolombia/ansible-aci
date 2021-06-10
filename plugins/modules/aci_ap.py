@@ -21,19 +21,21 @@ options:
     description:
     - The name of an existing tenant.
     type: str
-    required: yes
     aliases: [ tenant_name ]
   ap:
     description:
     - The name of the application network profile.
     type: str
-    required: yes
     aliases: [ app_profile, app_profile_name, name ]
   description:
     description:
     - Description for the AP.
     type: str
     aliases: [ descr ]
+  monitoring_policy:
+    description:
+    - The name of the monitoring policy.
+    type: str
   state:
     description:
     - Use C(present) or C(absent) for adding or removing.
@@ -49,16 +51,17 @@ extends_documentation_fragment:
 - cisco.aci.aci
 
 notes:
-- This module does not manage EPGs, see M(aci_epg) to do this.
+- This module does not manage EPGs, see M(cisco.aci.aci_epg) to do this.
 - The used C(tenant) must exist before using this module in your playbook.
-  The M(aci_tenant) module can be used for this.
+  The M(cisco.aci.aci_tenant) module can be used for this.
 seealso:
-- module: aci_tenant
+- module: cisco.aci.aci_tenant
 - name: APIC Management Information Model reference
   description: More information about the internal APIC class B(fv:Ap).
   link: https://developer.cisco.com/docs/apic-mim-ref/
 author:
 - Swetha Chunduri (@schunduri)
+- Shreyas Srish (@shrsr)
 '''
 
 EXAMPLES = r'''
@@ -70,6 +73,7 @@ EXAMPLES = r'''
     tenant: production
     ap: default
     description: default ap
+    monitoring_policy: default
     state: present
   delegate_to: localhost
 
@@ -221,6 +225,7 @@ def main():
         description=dict(type='str', aliases=['descr']),
         state=dict(type='str', default='present', choices=['absent', 'present', 'query']),
         name_alias=dict(type='str'),
+        monitoring_policy=dict(type='str'),
     )
 
     module = AnsibleModule(
@@ -237,6 +242,9 @@ def main():
     state = module.params.get('state')
     tenant = module.params.get('tenant')
     name_alias = module.params.get('name_alias')
+    monitoring_policy = module.params.get('monitoring_policy')
+
+    child_configs = [dict(fvRsApMonPol=dict(attributes=dict(tnMonEPGPolName=monitoring_policy)))]
 
     aci = ACIModule(module)
     aci.construct_url(
@@ -252,6 +260,7 @@ def main():
             module_object=ap,
             target_filter={'name': ap},
         ),
+        child_classes=['fvRsApMonPol'],
     )
 
     aci.get_existing()
@@ -264,6 +273,7 @@ def main():
                 descr=description,
                 nameAlias=name_alias,
             ),
+            child_configs=child_configs,
         )
 
         aci.get_diff(aci_class='fvAp')

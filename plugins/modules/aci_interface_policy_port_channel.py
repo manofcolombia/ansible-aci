@@ -21,7 +21,6 @@ options:
     description:
     - Name of the port channel.
     type: str
-    required: yes
     aliases: [ name ]
   description:
     description:
@@ -106,7 +105,8 @@ author:
 
 # FIXME: Add more, better examples
 EXAMPLES = r'''
-- cisco.aci.aci_interface_policy_port_channel:
+- name: Add a port channel interface policy
+  cisco.aci.aci_interface_policy_port_channel:
     host: '{{ inventory_hostname }}'
     username: '{{ username }}'
     password: '{{ password }}'
